@@ -54,7 +54,7 @@ fun DistanceVectorRoutingApp() {
 
 
     // Update currRouter when selectedNode changes
-    LaunchedEffect(selectedNode) {
+    LaunchedEffect(selectedNode,table) {
         currRouter = selectedNode?.let { table[it] } ?: table[0]
     }
 
