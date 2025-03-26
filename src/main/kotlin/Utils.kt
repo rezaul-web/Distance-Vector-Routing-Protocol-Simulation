@@ -3,7 +3,7 @@ object Utils {
     val nodes = generateRectangleLayout(
         rows = 3, cols = 5,
         startX = 100f, startY = 100f,
-        spacingX = 150f, spacingY = 150f
+        spacingX = 180f, spacingY = 180f
     )
 
     val edges = listOf(

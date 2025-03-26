@@ -1,0 +1,5 @@
+package bellmanford
+
+fun broadCastDistanceVector() {
+
+}

@@ -179,19 +179,36 @@ fun DistanceVectorRoutingApp() {
                     .align(Alignment.Center)
                     .fillMaxSize()
                     .pointerInput(Unit) {
-                        detectTapGestures { offset ->
-                            selectedNode = nodes.find { node ->
-                                val distance = sqrt((offset.x - node.x).pow(2) + (offset.y - node.y).pow(2))
-                                distance <= 20f
-                            }?.id
+                        detectTapGestures(
+                            onDoubleTap = { offset ->
+                                val tappedEdge = mutableEdges.find { edge ->
+                                    val start = nodes[edge.src]
+                                    val end = nodes[edge.dest]
+                                    isPointNearLine(offset, start, end)
+                                }
 
-                            selectedEdge = mutableEdges.find { edge ->
-                                val start = nodes[edge.src]
-                                val end = nodes[edge.dest]
-                                isPointNearLine(offset, start, end)
-                            }
-                        }
+                                tappedEdge?.let {
+                                    mutableEdges.remove(it)  // Remove the edge if double-clicked
+                                    mutableEdges.remove(it.copy(src = it.dest, dest = it.src))
+                                }
+
+                            },
+                            onTap = { offset ->
+                                selectedNode = nodes.find { node ->
+                                    val distance = sqrt((offset.x - node.x).pow(2) + (offset.y - node.y).pow(2))
+                                    distance <= 20f
+                                }?.id
+
+                                selectedEdge = mutableEdges.find { edge ->
+                                    val start = nodes[edge.src]
+                                    val end = nodes[edge.dest]
+                                    isPointNearLine(offset, start, end)
+                                }
+                            },
+
+                        )
                     }
+
             ) {
                 // Draw edges
                 mutableEdges.forEach { edge ->
@@ -202,7 +219,7 @@ fun DistanceVectorRoutingApp() {
                     val isSelected = edge == selectedEdge
 
                     val color = when {
-                        isSelected -> Color.Cyan
+                        isSelected -> Color(0xFF39FF14)
                         isHighlighted -> Color.Red
                         else -> Color.LightGray
                     }
