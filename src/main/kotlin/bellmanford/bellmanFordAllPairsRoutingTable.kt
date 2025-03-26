@@ -6,7 +6,7 @@ import Utils.INF
 import Utils.Node
 import kotlin.collections.indices
 
-fun bellmanFordAllPairsRoutingTable(nodes: List<Utils.Node>, edges: List<Utils.Edge>): Array<Array<RoutingTableEntry>> {
+fun bellmanFordAllPairsRoutingTable(nodes: List<Node>, edges: List<Edge>): Array<Array<RoutingTableEntry>> {
     val n = nodes.size
     val tables = Array(n) { Array(n) { RoutingTableEntry(-1, -1, INF) } }
 

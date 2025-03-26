@@ -22,6 +22,7 @@ import androidx.compose.ui.window.application
 import bellmanford.RoutingTableEntry
 import bellmanford.TableLayout
 import bellmanford.bellmanFordAllPairsRoutingTable
+import bellmanford.broadcastDistanceVector
 import kotlinx.coroutines.delay
 import kotlin.math.pow
 import kotlin.math.sqrt
@@ -48,6 +49,9 @@ fun DistanceVectorRoutingApp() {
     // Ensure routing table updates when mutableEdges change
     val table by remember { derivedStateOf { bellmanFordAllPairsRoutingTable(nodes, mutableEdges) } }
     var currRouter by remember { mutableStateOf(table[0]) }
+
+    var nextHopes by remember { mutableStateOf(mutableSetOf<Int>()) }
+
 
     // Update currRouter when selectedNode changes
     LaunchedEffect(selectedNode) {
@@ -87,10 +91,10 @@ fun DistanceVectorRoutingApp() {
 
                     } else {
                         println("Invalid input! Please enter valid numbers for source and destination.")
-                        validity="Invalid input! Please enter valid numbers for source and destination."
+                        validity = "Invalid input! Please enter valid numbers for source and destination."
                     }
-                    destinationId=""
-                    sourceId=""
+                    destinationId = ""
+                    sourceId = ""
                 },
                 modifier = Modifier
             ) {
@@ -168,6 +172,28 @@ fun DistanceVectorRoutingApp() {
                 delay(500)  // Simulating packet transmission delay
             }
         }
+        LaunchedEffect(Unit) {
+            nextHopes = mutableSetOf() // Clear previous highlights
+
+            for (node in nodes.indices) {
+                delay(1000)
+                // Iterate over all routers (nodes)
+                val newHopes = mutableSetOf<Int>()
+
+                val routingTable = table[node] // Get the routing table for current node
+                for (entry in routingTable) {
+                    if (entry.nextHop != -1) {
+                        newHopes.add(entry.nextHop)
+                    }
+                }
+
+               nextHopes=newHopes
+
+            }
+            nextHopes.clear()
+        }
+
+
 
 
 
@@ -206,7 +232,7 @@ fun DistanceVectorRoutingApp() {
                                 }
                             },
 
-                        )
+                            )
                     }
 
             ) {
@@ -217,10 +243,13 @@ fun DistanceVectorRoutingApp() {
 
                     val isHighlighted = animatedPath.contains(edge.src) && animatedPath.contains(edge.dest)
                     val isSelected = edge == selectedEdge
+                    val isInHopes = edge.src in nextHopes
+
 
                     val color = when {
                         isSelected -> Color(0xFF39FF14)
                         isHighlighted -> Color.Red
+//                        isInHopes->Color.Yellow
                         else -> Color.LightGray
                     }
 
