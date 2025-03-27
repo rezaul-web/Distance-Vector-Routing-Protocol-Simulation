@@ -1,6 +1,12 @@
 import Utils.Edge
 import Utils.edges
 import Utils.nodes
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -24,6 +30,7 @@ import bellmanford.TableLayout
 import bellmanford.bellmanFordAllPairsRoutingTable
 import bellmanford.broadcastDistanceVector
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -56,6 +63,23 @@ fun DistanceVectorRoutingApp() {
     // Update currRouter when selectedNode changes
     LaunchedEffect(selectedNode,table) {
         currRouter = selectedNode?.let { table[it] } ?: table[0]
+    }
+    val edgeAnimations = remember { mutableStateMapOf<Edge, Animatable<Float, AnimationVector1D>>() }
+
+    // Initialize animations for each edge
+    LaunchedEffect(Unit) {
+        for (edge in edges) {
+            edgeAnimations[edge] = Animatable(0f)
+            launch {
+                edgeAnimations[edge]?.animateTo(
+                    targetValue = 1f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(2000, easing = LinearEasing),
+                        repeatMode = RepeatMode.Reverse
+                    )
+                )
+            }
+        }
     }
 
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
@@ -258,6 +282,17 @@ fun DistanceVectorRoutingApp() {
                         end = Offset(end.x, end.y),
                         color = color,
                         strokeWidth = if (isSelected) 6f else 4f
+                    )
+                    val progress = edgeAnimations[edge]?.value ?: 0f
+
+                    // Compute the current position of the bubble
+                    val bubbleX = start.x + (end.x - start.x) * progress
+                    val bubbleY = start.y + (end.y - start.y) * progress
+
+                    drawCircle(
+                        color = Color.Red,
+                        center = Offset(bubbleX, bubbleY),
+                        radius = 8f
                     )
 
                     val midX = (end.x + start.x) / 2
