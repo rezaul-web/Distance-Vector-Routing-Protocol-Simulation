@@ -1,10 +1,7 @@
-// Keep existing imports
+
+
 import Utils.Edge
-import Utils.Node
 import Utils.INF
-import Utils.edges // Assuming these provide initial state
-import Utils.nodes // Assuming these provide initial state
-import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -15,6 +12,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -26,7 +24,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.pow
@@ -436,25 +433,6 @@ fun DistanceVectorRoutingApp() {
     } // End MaterialTheme
 }
 
-// ... (ControlCard, isPointNearLine, main function - unchanged) ...
-@Composable
-fun ControlCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Card(elevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.subtitle1, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.CenterHorizontally))
-            Divider(); content()
-        }
-    }
-}
-fun isPointNearLine(point: Offset, start: Node, end: Node, threshold: Float = 10f): Boolean {
-    val startOffset = Offset(start.x, start.y); val endOffset = Offset(end.x, end.y)
-    val lineVec = endOffset - startOffset; val pointVec = point - startOffset
-    val lineLenSq = lineVec.getDistanceSquared()
-    if (lineLenSq < 0.1f) return (point - startOffset).getDistanceSquared() < threshold * threshold
-    val t = (pointVec.x * lineVec.x + pointVec.y * lineVec.y) / lineLenSq
-    val projectionT = t.coerceIn(0f, 1f); val closestPoint = startOffset + lineVec * projectionT
-    return (point - closestPoint).getDistanceSquared() < threshold * threshold
-}
 fun main() = application {
     val windowState = rememberWindowState(width = 1200.dp, height = 850.dp) // Slightly taller window maybe
     Window(onCloseRequest = ::exitApplication, title = "Distance Vector Routing Simulation", state = windowState) {
