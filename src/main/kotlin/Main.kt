@@ -11,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.ui.input.pointer.pointerInput
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.pow
@@ -65,48 +67,224 @@ fun DistanceVectorRoutingApp() {
                 ?: emptyArray()
         }
     }
+    val dvExchangeAnimations = remember { mutableStateMapOf<Pair<Int, Int>, Animatable<Float, AnimationVector1D>>() } // Keep this
+    val coroutineScope = rememberCoroutineScope() // Keep this
 
-    // --- Effects ---
+    // --- NEW State for Sequential Visualization ---
+    var currentlyAdvertisingNode by remember { mutableStateOf<Int?>(null) } // Track which node is "sending"
+    var isVisualizingStep by remember { mutableStateOf(false) }
+    // --- Helper Function to Trigger SINGLE Node's DV Exchange Visuals ---
+    // Returns a list of Jobs for the launched animations for this sender
+    fun triggerSingleNodeDvVisuals(senderId: Int, currentEdges: List<Edge>): List<Job> {
+        val neighbors = currentEdges.filter { it.src == senderId }
+        val animationJobs = mutableListOf<Job>()
 
+        neighbors.forEach { edgeToNeighbor ->
+            val neighborId = edgeToNeighbor.dest
+            val animatable = Animatable(0f)
+            val key = senderId to neighborId
+            // Stop and remove any existing animation for this specific link first
+            // This prevents artifacts if a step is triggered quickly
+            coroutineScope.launch { dvExchangeAnimations[key]?.stop() }
+            dvExchangeAnimations.remove(key) // Remove immediately
+
+            // Add the new animation
+            dvExchangeAnimations[key] = animatable
+
+            val job = coroutineScope.launch {
+                try {
+                    animatable.animateTo(
+                        1f,
+                        // Make animation slightly slower to be noticeable
+                        tween(durationMillis = 1000, easing = LinearEasing)
+                    )
+                    // Keep the animation in the map until the *next* node starts
+                    // or the sequence ends. Removal will be handled by clear() or overwrite.
+                } catch (e: Exception) {
+                    // Animation cancelled, likely by clear() or stop()
+                    dvExchangeAnimations.remove(key) // Ensure removal on cancellation
+                }
+            }
+            animationJobs.add(job)
+        }
+        return animationJobs
+    }
+
+    // --- Helper Function to CLEAR all DV Exchange Animations ---
+    fun clearDvExchangeVisuals() {
+        // Cancel running animations first
+        dvExchangeAnimations.values.forEach { anim ->
+            coroutineScope.launch { // Launch cancellation in parallel
+                try { anim.stop() } catch (_: Exception) {}
+            }
+        }
+        // Clear the map
+        dvExchangeAnimations.clear()
+        currentlyAdvertisingNode = null // Also reset the advertiser state
+    }
+    // 1. Store previous table state for selected node (for highlighting later)
+    val previousSelectedTable = selectedNode?.let { allNodeTables.getOrNull(it)?.toMap() }
+    var previousTableForSelectedNode = selectedNode?.let { allNodeTables.getOrNull(it)?.toMap() }
+
+
+    // Auto-Stepping Timer Effect
     // Auto-Stepping Timer Effect
     LaunchedEffect(autoStepEnabled) {
         if (autoStepEnabled) {
-            while (true) {
-                delay(2000) // Delay between auto-steps (adjust as needed)
-                if (isConverged || !autoStepEnabled) break // Stop if converged or disabled
+            while (autoStepEnabled) { // Loop while enabled
 
-                // --- Run one DVR step ---
-                val (newTables, changed) = runDVRStep(allNodeTables, nodes, mutableEdges)
-                allNodeTables = newTables // Update the main state
-                simulationStep++
-                if (!changed) {
-                    isConverged = true
-                    validityMessage = "DVR Converged!" to Color.Green
-                    autoStepEnabled = false // Stop auto-stepping
-                } else {
-                    isConverged = false // Reset convergence flag if changes occurred
+                // --- Wait for any ongoing visualization from manual step/previous auto-step ---
+                while (isVisualizingStep && autoStepEnabled) {
+                    delay(200) // Check frequently if visualization is done or paused
                 }
-                // --- End DVR step ---
+                // Exit loop if autoStep got disabled while waiting
+                if (!autoStepEnabled) break
+                // Exit loop if converged
+                if (isConverged) break
+
+                // --- Start the next auto-step (similar logic to runSingleStep) ---
+                isVisualizingStep = true // Lock
+
+                val previousSelectedTable = selectedNode?.let { allNodeTables.getOrNull(it)?.toMap() }
+                val (newTables, changed) = runDVRStep(allNodeTables, nodes, mutableEdges)
+
+                // Launch visualization (runs sequentially inside)
+                val vizJob = coroutineScope.launch {
+                    try {
+                        if (changed) {
+                            validityMessage = "Step $simulationStep (Auto): Visualizing..." to Color.Blue
+                            clearDvExchangeVisuals()
+
+                            for (node in nodes) {
+                                // Check frequently if auto-step was disabled during visualization
+                                if (!autoStepEnabled || !isVisualizingStep) break
+                                currentlyAdvertisingNode = node.id
+                                triggerSingleNodeDvVisuals(node.id, mutableEdges)
+                                delay(1200) // Delay between each node's advertisement viz
+                            }
+                            if (autoStepEnabled && isVisualizingStep) { // Check flags again
+                                currentlyAdvertisingNode = null
+                                validityMessage = "Step $simulationStep (Auto): Applying Updates..." to Color.Blue
+                                delay(400)
+                            }
+                        } else {
+                            currentlyAdvertisingNode = null
+                            clearDvExchangeVisuals()
+                        }
+                    } finally {
+                        // Visualization part is done (or cancelled), but don't unlock outer flag yet
+                        currentlyAdvertisingNode = null
+                    }
+                }
+
+                // Wait for the visualization job to complete before applying updates
+                vizJob.join()
+
+                // --- Apply updates only if auto-step is still enabled ---
+                if (autoStepEnabled) {
+                    allNodeTables = newTables
+                    previousTableForSelectedNode = previousSelectedTable
+                    simulationStep++
+
+                    if (!changed) {
+                        isConverged = true
+                        validityMessage = "DVR Converged!" to Color.Green
+                        autoStepEnabled = false // Stop auto-stepping on convergence
+                    } else {
+                        isConverged = false
+                        validityMessage = "Step $simulationStep (Auto) Completed." to Color.DarkGray
+                    }
+                    isVisualizingStep = false // Unlock *after* updates applied
+                    delay(1500) // Wait before starting the *next* calculation cycle
+                } else {
+                    // Auto-step was disabled during visualization/update
+                    isVisualizingStep = false // Ensure unlocked
+                    validityMessage = "Auto-Step Paused." to Color.Gray
+                    clearDvExchangeVisuals() // Clean up visuals if paused
+                    break // Exit the while loop
+                }
+            } // End while(autoStepEnabled)
+        } else {
+            // Cleanup if auto-step is manually turned off
+            if (isVisualizingStep) {
+                // If visualization was running, signal it to stop (by setting flag)
+                isVisualizingStep = false // Coroutines check this flag
+                clearDvExchangeVisuals()
+                validityMessage = "Auto-Step Paused." to Color.Gray
             }
         }
     }
 
     // Function to manually run one step
     fun runSingleStep() {
-        if (isConverged) {
-            validityMessage = "Already Converged." to Color.Blue
+        // Prevent running if already converged or visualization is in progress
+        if (isConverged || isVisualizingStep) {
+            if (isConverged) validityMessage = "Already Converged." to Color.Blue
             return
         }
+
+        isVisualizingStep = true // Lock buttons
+
+
+        // 2. Calculate the result of the step (Bellman-Ford update)
+        //    This doesn't change the actual state yet.
         val (newTables, changed) = runDVRStep(allNodeTables, nodes, mutableEdges)
-        allNodeTables = newTables
-        simulationStep++
-        if (!changed) {
-            isConverged = true
-            validityMessage = "DVR Converged!" to Color.Green
-        } else {
-            isConverged = false
-            // validityMessage = "Step $simulationStep completed." to Color.DarkGray // Optional step message
-        }
+
+        // 3. Launch the Sequential Visualization Coroutine
+        coroutineScope.launch {
+            try {
+                if (changed) {
+                    validityMessage = "Step $simulationStep: Visualizing Advertisements..." to Color.Blue
+                    clearDvExchangeVisuals() // Clear any previous visuals first
+
+                    // Iterate through each node to visualize its advertisement sending
+                    for (node in nodes) {
+                        currentlyAdvertisingNode = node.id // Set who is advertising now
+
+                        // Trigger animations for this node sending to its neighbors
+                        val jobs = triggerSingleNodeDvVisuals(node.id, mutableEdges)
+                        // jobs.joinAll() // Option 1: Wait for this node's animations to complete (might be too slow if many neighbors)
+                        delay(1200)      // Option 2: Wait a fixed delay (adjust as needed, should be >= animation duration)
+
+                        // Optimization: If auto-stepping was disabled during viz, stop early
+                        if (!isVisualizingStep) break // Check flag (might be set by Reset/Pause)
+                    }
+
+                    // Short pause after all visualizations before applying table updates
+                    if (isVisualizingStep) { // Check flag again
+                        currentlyAdvertisingNode = null // Clear advertiser
+                        validityMessage = "Step $simulationStep: Applying Updates..." to Color.Blue
+                        delay(400)
+                    }
+                } else {
+                    currentlyAdvertisingNode = null // Ensure cleared even if no changes
+                    clearDvExchangeVisuals()
+                }
+
+                // --- Only proceed if visualization wasn't cancelled ---
+                if (isVisualizingStep) {
+                    // 4. Apply the Calculated Updates to the Main State *NOW*
+                    allNodeTables = newTables
+                    previousTableForSelectedNode = previousSelectedTable // Update the 'previous' state for the *next* step's comparison
+                    simulationStep++
+
+                    // 5. Check Convergence & Update Message
+                    if (!changed) {
+                        isConverged = true
+                        validityMessage = "DVR Converged!" to Color.Green
+                    } else {
+                        isConverged = false
+                        // Message was handled during visualization stages
+                        validityMessage = "Step $simulationStep Completed." to Color.DarkGray // Final step message
+                    }
+                }
+
+            } finally {
+                // 6. Unlock Buttons regardless of success/cancellation
+                isVisualizingStep = false
+                currentlyAdvertisingNode = null // Ensure cleared on exit/error
+            }
+        } // End of coroutine launch
     }
 
 
@@ -200,41 +378,177 @@ fun DistanceVectorRoutingApp() {
                             )
                         }
                 ) {
+
+
+
+
+// ... other imports like Canvas, nodes, mutableEdges, etc. ...
+
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         // Draw Edges
                         mutableEdges.forEach { edge ->
                             val startNode = nodes.getOrNull(edge.src); val endNode = nodes.getOrNull(edge.dest); if (startNode == null || endNode == null) return@forEach
                             val start = Offset(startNode.x, startNode.y); val end = Offset(endNode.x, endNode.y)
-                            // Check if this specific edge segment is part of the animated path
-                            val isAnimated = animatedPath.contains(edge.src to edge.dest) || animatedPath.contains(edge.dest to edge.src)
-                            val isSelected = selectedEdge?.let { (it.src == edge.src && it.dest == edge.dest) || (it.src == edge.dest && it.dest == edge.src) } ?: false
-                            val strokeWidth = when { isSelected -> 7f; isAnimated -> 6f; else -> 4f }; val color = when { isSelected -> Color(0xFFFFA500); isAnimated -> Color.Red; else -> Color.Gray }
+
+                            // --- Determine edge style (Selected > ShortestPath > Advertising > Default) ---
+                            // isShortestPathAnimated check determines if the *edge* should be highlighted red
+                            val isShortestPathAnimated = animatedPath.contains(edge.src to edge.dest) || animatedPath.contains(edge.dest to edge.src)
+                            val isEdgeSelected = selectedEdge?.let { (it.src == edge.src && it.dest == edge.dest) || (it.src == edge.dest && it.dest == edge.src) } ?: false
+                            val isAdvertisingEdge = edge.src == currentlyAdvertisingNode
+
+                            val strokeWidth = when {
+                                isEdgeSelected -> 7f
+                                isShortestPathAnimated -> 6f // Highlight edge red if part of shortest path
+                                isAdvertisingEdge -> 5f
+                                else -> 4f
+                            }
+                            val color = when {
+                                isEdgeSelected -> Color(0xFFFFA500)
+                                isShortestPathAnimated -> Color.Red // Highlight edge red
+                                isAdvertisingEdge -> Color(0xFF9C27B0)
+                                else -> Color.Gray
+                            }
+
+                            // Draw the edge line
                             drawLine(start = start, end =  end, color =  color, strokeWidth =  strokeWidth)
+
+                            // Draw edge cost
                             val midX = (start.x + end.x) / 2; val midY = (start.y + end.y) / 2
                             drawText(textMeasurer, edge.cost.toString(), Offset(midX - 8, midY - 20), TextStyle(Color.Black, 12.sp, background = Color(0xAAFFFFFF)))
-                            // Draw animated "packet" dot moving along the line
-                            edgeAnimations[edge]?.value?.let { progress -> if (mutableEdges.contains(edge) && progress > 0.01f && progress < 0.99f) { drawCircle(color=Color(0xFF00BCD4), center =  Offset(start.x + (end.x - start.x) * progress, start.y + (end.y - start.y) * progress), radius =  8f) } }
-                        }
-                        // Draw Nodes
+
+
+                            // --- Draw Shortest Path Symbolic "Packet" ---
+                            // We still use edgeAnimations for the *timing* of the packet movement
+                            edgeAnimations[edge]?.value?.let { progress ->
+                                // Check if this edge is ACTUALLY the one being animated in the shortest path *right now*
+                                // The packet moves from u -> v in the animatedPath sequence
+                                val pathSegment = animatedPath.find { (u, v) -> (u == edge.src && v == edge.dest) }
+                                val reversePathSegment = animatedPath.find { (u, v) -> (u == edge.dest && v == edge.src) }
+
+                                // Determine the actual source for this segment's packet
+                                val packetSourceId = when {
+                                    pathSegment != null -> pathSegment.first // Moving edge.src -> edge.dest
+                                    reversePathSegment != null -> reversePathSegment.first // Moving edge.dest -> edge.src
+                                    else -> null // This edge might be highlighted but not the current animation segment
+                                }
+
+                                // Check if the packet should be drawn on this edge segment
+                                if (packetSourceId != null && mutableEdges.contains(edge) && progress > 0.01f && progress < 0.99f) {
+
+                                    // Calculate current position based on progress
+                                    // IMPORTANT: Ensure direction matches the animatedPath segment
+                                    val packetStartPos: Offset
+                                    val packetEndPos: Offset
+                                    if (packetSourceId == edge.src) { // Moving start -> end
+                                        packetStartPos = start
+                                        packetEndPos = end
+                                    } else { // Moving end -> start (packetSourceId == edge.dest)
+                                        packetStartPos = end
+                                        packetEndPos = start
+                                    }
+                                    val currentPos = Offset(
+                                        packetStartPos.x + (packetEndPos.x - packetStartPos.x) * progress,
+                                        packetStartPos.y + (packetEndPos.y - packetStartPos.y) * progress
+                                    )
+
+                                    // --- Draw the symbolic table (similar to DV packet, but different colors) ---
+                                    val tableWidth = 26f
+                                    val tableHeight = 20f
+                                    val rectTopLeft = Offset(
+                                        currentPos.x - tableWidth / 2,
+                                        currentPos.y - tableHeight / 2
+                                    )
+
+                                    // Background rectangle (Blue/Cyan theme)
+                                    drawRect(
+                                        color = Color(0xFFB2EBF2), // Light Cyan background
+                                        topLeft = rectTopLeft,
+                                        size = Size(tableWidth, tableHeight)
+                                    )
+                                    // Border
+                                    drawRect(
+                                        color = Color(0xFF00BCD4), // Cyan border
+                                        topLeft = rectTopLeft,
+                                        size = Size(tableWidth, tableHeight),
+                                        style = Stroke(width = 1.5f)
+                                    )
+
+                                    // Draw the Source ID inside
+                                    val textStyle = TextStyle(
+                                        color = Color.Black, fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold, textAlign = TextAlign.Center
+                                    )
+                                    val textLayoutResult = textMeasurer.measure(packetSourceId.toString(), style = textStyle)
+                                    val textWidth = textLayoutResult.size.width
+                                    val textHeight = textLayoutResult.size.height
+
+                                    drawText(
+                                        textLayoutResult = textLayoutResult,
+                                        topLeft = Offset(
+                                            rectTopLeft.x + (tableWidth - textWidth) / 2,
+                                            rectTopLeft.y + (tableHeight - textHeight) / 2
+                                        )
+                                    )
+                                }
+                            } // End drawing shortest path symbolic packet
+
+
+                            // --- Draw DV Advertisement Symbolic "Table" Packet (Existing logic) ---
+                            val dvAnimationKey = edge.src to edge.dest
+                            dvExchangeAnimations[dvAnimationKey]?.value?.let { progress ->
+                                if (edge.src == currentlyAdvertisingNode && progress > 0.01f && progress < 0.99f) {
+                                    val senderId = edge.src
+                                    val currentPos = Offset(start.x + (end.x - start.x) * progress, start.y + (end.y - start.y) * progress)
+                                    val tableWidth = 26f; val tableHeight = 20f
+                                    val rectTopLeft = Offset(currentPos.x - tableWidth / 2, currentPos.y - tableHeight / 2)
+
+                                    // Background (Purple theme)
+                                    drawRect(color = Color(0xFFE1BEE7), topLeft = rectTopLeft, size = Size(tableWidth, tableHeight))
+                                    // Border
+                                    drawRect(color = Color(0xFF7B1FA2), topLeft = rectTopLeft, size = Size(tableWidth, tableHeight), style = Stroke(width = 1.5f))
+                                    // Text
+                                    val textStyle = TextStyle(color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                    val textLayoutResult = textMeasurer.measure(senderId.toString(), style = textStyle)
+                                    drawText(textLayoutResult = textLayoutResult, topLeft = Offset(rectTopLeft.x + (tableWidth - textLayoutResult.size.width) / 2, rectTopLeft.y + (tableHeight - textLayoutResult.size.height) / 2))
+                                }
+                            } // End drawing DV symbolic table
+
+                        } // End mutableEdges.forEach
+
+                        // Draw Nodes (Existing logic with advertising highlight should remain)
+                        // ... (Node drawing code remains the same as your last version) ...
                         nodes.forEach { node ->
                             val isSelected = node.id == selectedNode
-                            // Check if this node is part of the animated path *sequence*
                             val isInPath = shortestPath.contains(node.id)
-                            // Highlight based on sequence for clarity
+                            val isAdvertising = node.id == currentlyAdvertisingNode
+
+                            // Determine node color (Advertising > Selected > Path > Default)
                             val nodeColor = when {
+                                isAdvertising -> Color(0xFFBA68C8) // Lighter Purple/Pink for advertising node base
                                 isSelected -> Color.Magenta
-                                isInPath && shortestPath.firstOrNull() == node.id -> Color(0xFF1B5E20) // Darker Green for start
-                                isInPath && shortestPath.lastOrNull() == node.id -> Color(0xFFFF6F00) // Amber/Orange for end
-                                isInPath -> Color(0xFF4CAF50) // Green for intermediate
+                                isInPath && shortestPath.firstOrNull() == node.id -> Color(0xFF1B5E20)
+                                isInPath && shortestPath.lastOrNull() == node.id -> Color(0xFFFF6F00)
+                                isInPath -> Color(0xFF4CAF50)
                                 else -> Color.Blue
                             }
                             val radius = 20f
-                            if (isSelected) { drawCircle(center = Offset(node.x, node.y), radius = radius + 4f, color =  Color.Yellow, style = Stroke(3f)) }
+
+                            // Draw outer highlights (Advertising > Selected)
+                            if (isAdvertising) {
+                                drawCircle(center = Offset(node.x, node.y), radius = radius + 7f, color = Color(0xFF9C27B0).copy(alpha = 0.4f), style = Stroke(width = 3f))
+                            }
+                            if (isSelected) {
+                                drawCircle(center = Offset(node.x, node.y), radius = radius + 4f, color = Color.Yellow, style = Stroke(3f))
+                            }
+
+                            // Draw the base node circle
                             drawCircle(center = Offset(node.x, node.y), radius = radius, color = nodeColor)
+
+                            // Draw node ID text
                             drawText(textMeasurer, node.id.toString(), Offset(node.x - 6f, node.y - 10f), TextStyle(Color.White, 16.sp, fontWeight = FontWeight.Bold))
-                        }
-                    }
-                  Row(modifier = Modifier.align(Alignment.BottomStart).padding(top=100.dp,start=100.dp,end=100.dp))  {
+                        } // End nodes.forEach
+                    } // End Canvas
+                    Row(modifier = Modifier.align(Alignment.BottomStart).padding(top=100.dp,start=100.dp,end=100.dp))  {
                         ControlCard(title = "Link Management") {
                             OutlinedTextField(
                                 sourceId,
@@ -252,49 +566,105 @@ fun DistanceVectorRoutingApp() {
                             )
                             OutlinedTextField(
                                 weightInput,
-                                { weightInput = it.filter { c -> c.isDigit() } },
+                                { weightInput = it.filter { c -> c.isDigit() }.takeIf { it.isNotEmpty() } ?: "1" }, // Ensure cost isn't empty, default to 1 if cleared
                                 label = { Text("Cost") },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true
                             )
                             Row(Modifier.fillMaxWidth().padding(top = 8.dp), Arrangement.SpaceEvenly) { /* Buttons */
+                                // --- Add Button (Existing) ---
                                 Button(onClick = {
-                                    // ... Add Link Logic (validation first) ...
-                                    val src = sourceId.toIntOrNull();
-                                    val dest = destinationId.toIntOrNull();
-                                    val cost = weightInput.toIntOrNull()
-                                    if (src == null || dest == null || cost == null) validityMessage =
-                                        "Invalid ID or Cost." to Color.Red
+                                    val src = sourceId.toIntOrNull(); val dest = destinationId.toIntOrNull(); val cost = weightInput.toIntOrNull()
+                                    if (src == null || dest == null || cost == null) validityMessage = "Invalid ID or Cost." to Color.Red
                                     else if (src == dest) validityMessage = "Nodes must be different." to Color.Red
-                                    else if (src !in nodes.indices || dest !in nodes.indices) validityMessage =
-                                        "Node ID out of bounds." to Color.Red
+                                    else if (src !in nodes.indices || dest !in nodes.indices) validityMessage = "Node ID out of bounds (${nodes.indices})." to Color.Red
                                     else if (cost <= 0) validityMessage = "Cost must be positive." to Color.Red
-                                    else if (!mutableEdges.any { (it.src == src && it.dest == dest) || (it.src == dest && it.dest == src) }) { // Check both directions
-                                        mutableEdges.add(Edge(src, dest, cost)); mutableEdges.add(Edge(dest, src, cost))
+                                    else if (!mutableEdges.any { (it.src == src && it.dest == dest) || (it.src == dest && it.dest == src) }) {
+                                        // Add bidirectional edge
+                                        val edge1 = Edge(src, dest, cost)
+                                        val edge2 = Edge(dest, src, cost)
+                                        mutableEdges.add(edge1); mutableEdges.add(edge2)
                                         validityMessage = "Link added: $src <-> $dest (Cost: $cost)" to Color.Green
                                         sourceId = ""; destinationId = ""; weightInput = "1"
-                                        isConverged = false // Adding link requires reconvergence
+                                        isConverged = false
+                                        // Potentially clear/reset animations if needed
+                                        // edgeAnimations.remove(edge1); edgeAnimations.remove(edge2) // Remove old if somehow existed?
+                                        // coroutineScope.launch { /* re-init animations if needed */ }
                                     } else validityMessage = "Link $src <-> $dest already exists." to Color.Blue
                                 }) { Text("Add") }
+
+                                // --- Remove Button (Existing) ---
                                 Button(onClick = {
-                                    // ... Remove Link Logic (validation first) ...
-                                    val src = sourceId.toIntOrNull();
-                                    val dest = destinationId.toIntOrNull()
+                                    val src = sourceId.toIntOrNull(); val dest = destinationId.toIntOrNull()
                                     if (src == null || dest == null) validityMessage = "Invalid ID." to Color.Red
-                                    else if (src !in nodes.indices || dest !in nodes.indices) validityMessage =
-                                        "Node ID out of bounds." to Color.Red
+                                    else if (src !in nodes.indices || dest !in nodes.indices) validityMessage = "Node ID out of bounds (${nodes.indices})." to Color.Red
                                     else {
-                                        val removed =
-                                            mutableEdges.removeAll { (it.src == src && it.dest == dest) || (it.src == dest && it.dest == src) }
-                                        validityMessage =
-                                            if (removed) "Link removed: $src <-> $dest" to Color.Blue else "Link $src <-> $dest not found." to Color.Red
-                                        sourceId = ""; destinationId = ""
-                                        if (removed) isConverged = false // Removing link requires reconvergence
+                                        // Find the keys/edges to remove animations for *before* removing from mutableEdges
+                                        val edgesToRemoveAnimations = edgeAnimations.keys.filter { (it.src == src && it.dest == dest) || (it.src == dest && it.dest == src) }
+                                        // Remove edges from list
+                                        val removed = mutableEdges.removeAll { (it.src == src && it.dest == dest) || (it.src == dest && it.dest == src) }
+
+                                        validityMessage = if (removed) "Link removed: $src <-> $dest" to Color.Blue else "Link $src <-> $dest not found." to Color.Red
+                                        sourceId = ""; destinationId = ""; weightInput = "1" // Reset cost input too
+                                        if (removed) {
+                                            isConverged = false
+                                            // Remove associated animations
+                                            edgesToRemoveAnimations.forEach { edgeAnimations.remove(it) }
+                                            // Clear DV animations too, as structure changed
+                                            clearDvExchangeVisuals() // Assumes clearDvExchangeVisuals() exists
+                                            previousTableForSelectedNode = allNodeTables.getOrNull(selectedNode ?: -1)?.toMap() // Reset comparison
+                                        }
                                     }
                                 }) { Text("Remove") }
-                            }
-                        }
-                    }
+
+                                // --- NEW: Update Cost Button ---
+                                Button(onClick = {
+                                    val src = sourceId.toIntOrNull(); val dest = destinationId.toIntOrNull(); val newCost = weightInput.toIntOrNull()
+                                    // Validation
+                                    if (src == null || dest == null || newCost == null) validityMessage = "Invalid ID or Cost." to Color.Red
+                                    else if (src == dest) validityMessage = "Nodes must be different." to Color.Red
+                                    else if (src !in nodes.indices || dest !in nodes.indices) validityMessage = "Node ID out of bounds (${nodes.indices})." to Color.Red
+                                    else if (newCost <= 0) validityMessage = "Cost must be positive." to Color.Red
+                                    else {
+                                        // Find the indices of the edges to update
+                                        val index1 = mutableEdges.indexOfFirst { it.src == src && it.dest == dest }
+                                        val index2 = mutableEdges.indexOfFirst { it.src == dest && it.dest == src }
+
+                                        if (index1 != -1 && index2 != -1) {
+                                            // Get existing edges to compare cost
+                                            val oldCost = mutableEdges[index1].cost // Assuming bidirectional edges have same cost
+                                            if (oldCost == newCost) {
+                                                validityMessage = "Cost is already $newCost for link $src <-> $dest." to Color.Blue
+                                            } else {
+                                                // Create new edges with updated cost
+                                                val updatedEdge1 = mutableEdges[index1].copy(cost = newCost)
+                                                val updatedEdge2 = mutableEdges[index2].copy(cost = newCost)
+                                                // Update the list (set replaces element at index)
+                                                mutableEdges[index1] = updatedEdge1
+                                                mutableEdges[index2] = updatedEdge2
+
+                                                validityMessage = "Link cost updated: $src <-> $dest (New Cost: $newCost)" to Color.Green
+                                                isConverged = false // Cost change requires reconvergence
+
+                                                // Reset relevant animations/state
+                                                // Remove old animations associated with the *specific* edge objects if map uses object identity
+                                                // edgeAnimations.remove(mutableEdges[index1]) // This might not work if key relies on old object
+                                                // Instead, maybe force re-initialization or clear related animations by ID pair?
+                                                edgeAnimations.keys.filter { (eSrc, eDest, _) -> (eSrc == src && eDest == dest) || (eSrc == dest && eDest == src) }.forEach { edgeAnimations.remove(it) }
+                                                clearDvExchangeVisuals() // Recommended as costs changed
+                                                previousTableForSelectedNode = allNodeTables.getOrNull(selectedNode ?: -1)?.toMap() // Reset comparison
+
+                                            }
+                                        } else {
+                                            validityMessage = "Link $src <-> $dest not found." to Color.Red
+                                        }
+                                        // Clear inputs after attempt
+                                        sourceId = ""; destinationId = ""; weightInput = "1"
+                                    }
+                                }) { Text("Update Cost") } // Label for the new button
+                            } // End Button Row
+                        } // End ControlCard Content
+                    } // End Outer Row
 
                 } // --- End Canvas Box ---
 
