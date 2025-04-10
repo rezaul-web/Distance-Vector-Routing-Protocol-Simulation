@@ -192,7 +192,7 @@ fun DistanceVectorRoutingApp() {
                         autoStepEnabled = false // Stop auto-stepping on convergence
                     } else {
                         isConverged = false
-                        validityMessage = "Step $simulationStep (Auto) Completed." to Color.DarkGray
+                        validityMessage = "Step ${simulationStep} (Auto) Completed." to Color.DarkGray
                     }
                     isVisualizingStep = false // Unlock *after* updates applied
                     delay(1500) // Wait before starting the *next* calculation cycle
@@ -275,7 +275,7 @@ fun DistanceVectorRoutingApp() {
                     } else {
                         isConverged = false
                         // Message was handled during visualization stages
-                        validityMessage = "Step $simulationStep Completed." to Color.DarkGray // Final step message
+                        validityMessage = "Step ${simulationStep-1} Completed." to Color.DarkGray // Final step message
                     }
                 }
 
@@ -615,6 +615,7 @@ fun DistanceVectorRoutingApp() {
                                             previousTableForSelectedNode = allNodeTables.getOrNull(selectedNode ?: -1)?.toMap() // Reset comparison
                                         }
                                     }
+
                                 }) { Text("Remove") }
 
                                 // --- NEW: Update Cost Button ---
