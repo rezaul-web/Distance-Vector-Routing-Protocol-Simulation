@@ -46,7 +46,7 @@ object Utils {
         // --- Edges involving Node 5 ---
         Edge(1, 5, 4), Edge(5, 1, 4),   // Link 1-5 Cost 4
         Edge(2, 5, 3), Edge(5, 2, 3),   // Link 2-5 Cost 3
-        Edge(4, 5, 5), Edge(5, 4, 5)    // Link 4-5 Cost 5 (Connect center to node 5)
+     //   Edge(4, 5, 5), Edge(5, 4, 5)    // Link 4-5 Cost 5 (Connect center to node 5)
     )
 
     // Expose initial edges for the Composable
