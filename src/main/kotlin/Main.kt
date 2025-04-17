@@ -391,6 +391,18 @@ fun DistanceVectorRoutingApp() {
                             )
                         }
                 ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp).align(
+                        Alignment.TopStart
+                    )) {
+                        Text("Animation Speed: ${"%.1fx".format(animationSpeedFactor)}", fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
+                        Slider(
+                            value = animationSpeedFactor,
+                            onValueChange = { animationSpeedFactor = it },
+                            valueRange = 0.2f..3.0f, // Example range: 0.2x to 3.0x speed
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                        )
+                        Text(text="Click On Node to See the Routing Table")
+                    }
                     // --- Canvas Drawing ---
                     // (Canvas drawing logic remains unchanged from your original code)
                     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -560,15 +572,7 @@ fun DistanceVectorRoutingApp() {
 
                     // --- ADDED: Animation Speed Slider ---
                     // Placed here, after sim controls, before the next card
-                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                        Text("Animation Speed: ${"%.1fx".format(animationSpeedFactor)}", fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterHorizontally))
-                        Slider(
-                            value = animationSpeedFactor,
-                            onValueChange = { animationSpeedFactor = it },
-                            valueRange = 0.2f..3.0f, // Example range: 0.2x to 3.0x speed
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
-                        )
-                    }
+
                     Spacer(Modifier.height(8.dp)) // Add spacer after slider
 
                     // --- Find Path Section ---
