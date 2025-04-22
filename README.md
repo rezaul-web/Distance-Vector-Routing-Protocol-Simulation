@@ -9,8 +9,15 @@ A visual and interactive simulation of the **Distance Vector Routing (DVR)** pro
 
 ## 📸 Screenshot / GIF
 
-![DVR Simulation Screenshot](placeholder.png)
-***(Replace this placeholder with an actual screenshot or GIF of your application!)** A visual demonstration is highly recommended.*
+
+
+
+
+https://github.com/user-attachments/assets/716f3fc6-3b51-449f-b5d8-c9ac3b98000c
+
+
+
+
 
 ---
 
